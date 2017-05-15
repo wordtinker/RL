@@ -11,7 +11,7 @@ namespace GridworldWithDP
 
     enum StateType
     {
-        Termial, NonTerminal
+        Terminal, NonTerminal
     }
 
     class State
@@ -71,7 +71,7 @@ namespace GridworldWithDP
                 {
                     foreach (State s in item)
                     {
-                        if (s.Type != StateType.Termial) yield return s;
+                        if (s.Type != StateType.Terminal) yield return s;
                     }
                 }
             }
@@ -111,6 +111,14 @@ namespace GridworldWithDP
 
         public double GetReward(State state, Action action, State newState)
         {
+            if (newState.Type == StateType.Terminal)
+            {
+                return 1;
+            }
+            else if (state == newState)
+            {
+                return -2;
+            }
             return -1;
         }
 
@@ -154,7 +162,7 @@ namespace GridworldWithDP
                 string line3 = "";
                 foreach (State s in item)
                 {
-                    if (s.Type == StateType.Termial)
+                    if (s.Type == StateType.Terminal)
                     {
                         line1 += "xxx ";
                         line2 += "xxx ";
@@ -187,8 +195,8 @@ namespace GridworldWithDP
                     states[i][j] = new State(i, j);
                 }
             }
-            states[0][0].Type = StateType.Termial;
-            states[3][3].Type = StateType.Termial;
+            states[0][0].Type = StateType.Terminal;
+            states[3][3].Type = StateType.Terminal;
         }
     }
 
@@ -202,7 +210,6 @@ namespace GridworldWithDP
         public PolicyState(State s)
         {
             Actions = new List<Action>();
-            int aCount = s.Actions.Count();
             foreach (Action a in s.Actions)
             {
                 Actions.Add(a);
@@ -360,10 +367,8 @@ namespace GridworldWithDP
             this.gamma = gamma;
             // create equiprobable random policy
             P = new Dictionary<State, PolicyState>();
-            int sCount = 0;
             foreach (State s in env.StatesPlus)
             {
-                sCount++;
                 P[s] = new PolicyState(s);
             }
         }

@@ -405,7 +405,7 @@ namespace GridworldWithDP
             } while (!stable);
 
             // Value iteration process
-            Policy otherPolicy = new Policy(env);
+            Policy otherPolicy = new Policy(env, gamma: 0.5);
             Console.WriteLine("Starting policy");
             env.PrintPolicy(otherPolicy);
             Console.WriteLine();

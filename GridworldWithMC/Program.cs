@@ -279,9 +279,11 @@ namespace GridworldWithDP
     {
         // state action value
         public double? Value { get; set; }
+        // cumulative sum Cn of the weights given to the first n returns for off policy learning
+        public double C { get; set; }
         // state action return
         public double? G { get; set; }
-        // number of times state action has been visited(first time)
+        // number of times state action has been visited(first time or every time)
         public int N { get; set; }
         // marks action as used by Policy
         public bool InPolicy { get { return P > 0; } }
@@ -294,9 +296,66 @@ namespace GridworldWithDP
         }
     }
 
+    static class Walker
+    {
+        private static Random rnd = new Random();
+        private static IEnumerable<Tuple<State, Action, double>> GenerateWalk(Environment env, Policy p, State s, Action a)
+        {
+            // Reward
+            double r;
+            while (true)
+            {
+                // ask for new state and reward
+                var nsr = env.GetReward(s, a);
+                r = nsr.Item2;
+
+                yield return Tuple.Create(s, a, r);
+
+                s = nsr.Item1;
+                if (s.Type == StateType.Terminal)
+                {
+                    break;
+                }
+                // choose action by the policy
+                a = p.P[s].NextAction;
+            }
+        }
+
+        /// <summary>
+        /// Generates an episode starting from S0, A0, following π
+        /// </summary>
+        /// <returns></returns>
+        public static List<Tuple<State, Action, double>> GenerateEpisode(Environment env, Policy p, bool exploringStart = true)
+        {
+            List<Tuple<State, Action, double>> episode = new List<Tuple<State, Action, double>>();
+            int startingState = rnd.Next(env.States.Count());
+            State s = env.States.ElementAt(startingState);
+            Action a;
+            if (exploringStart)
+            {
+                // Exploring start
+                // any s,a pair is viable as starting pair
+                // regardless of policy
+                int startingAction = rnd.Next(s.Actions.Count());
+                a = s.Actions.ElementAt(startingAction);
+            }
+            else
+            {
+                // choose action by the policy
+                a = p.P[s].NextAction;
+            }
+            // Generate a walk from that position
+            foreach (var item in GenerateWalk(env, p, s, a))
+            {
+                episode.Add(item);
+            }
+            return episode;
+        }
+    }
+
     class Policy
     {
-        Dictionary<State, PolicyState> P;
+        public Dictionary<State, PolicyState> P { get; }
         private Environment env;
         private double gamma;
         private Random rnd;
@@ -316,59 +375,6 @@ namespace GridworldWithDP
             return P[s].Actions;
         }
 
-        private IEnumerable<Tuple<State, Action, double>> GenerateWalk(State s, Action a)
-        {
-            // Reward
-            double r;
-            while (true)
-            {
-                // ask for new state and reward
-                var nsr = env.GetReward(s, a);
-                r = nsr.Item2;
-
-                yield return Tuple.Create(s, a, r);
-
-                s = nsr.Item1;
-                if (s.Type == StateType.Terminal)
-                {
-                    break;
-                }
-                // choose action by the policy
-                a = P[s].NextAction;
-            }
-        }
-
-        /// <summary>
-        /// Generates an episode starting from S0, A0, following π
-        /// </summary>
-        /// <returns></returns>
-        private List<Tuple<State, Action, double>> GenerateEpisode(bool exploringStart = true)
-        {
-            List<Tuple<State, Action, double>> episode = new List<Tuple<State, Action, double>>();
-            int startingState = rnd.Next(env.States.Count());
-            State s = env.States.ElementAt(startingState);
-            Action a;
-            if (exploringStart)
-            {
-                // Exploring start
-                // any s,a pair is viable as starting pair
-                // regardless of policy
-                int startingAction = rnd.Next(s.Actions.Count());
-                a = s.Actions.ElementAt(startingAction);
-            }
-            else
-            {
-                // choose action by the policy
-                a = P[s].NextAction;
-            }
-            // Generate a walk from that position
-            foreach (var item in GenerateWalk(s, a))
-            {
-                episode.Add(item);
-            } 
-            return episode;
-        }
-
         /// <summary>
         /// First-visit MC
         /// TODO Can't generate policy from that w/o proper model.
@@ -386,7 +392,7 @@ namespace GridworldWithDP
             for (int i = 0; i < limit; i++)
             {
                 // Generate an episode
-                var episode = GenerateEpisode();
+                var episode = Walker.GenerateEpisode(env, this);
                 // initiate new return G
                 double g = 0;
                 foreach (var sar in episode.Reverse<Tuple<State, Action, double>>())
@@ -433,7 +439,7 @@ namespace GridworldWithDP
             for (int i = 0; i < limit; i++)
             {
                 // Generate an episode
-                var episode = GenerateEpisode();
+                var episode = Walker.GenerateEpisode(env, this);
 
                 // prediction
                 // initiate new return G
@@ -486,7 +492,7 @@ namespace GridworldWithDP
             for (int i = 0; i < limit; i++)
             {
                 // Generate an episode
-                var episode = GenerateEpisode(exploringStart:false);
+                var episode = Walker.GenerateEpisode(env, this, exploringStart: false);
 
                 // prediction
                 // initiate new return G
@@ -529,6 +535,82 @@ namespace GridworldWithDP
                     {
                         item.Value.P = item.Value.Value == max ? x : epsilon / (double)P[s].Actions.Count;
                     }
+                }
+            }
+            return limit;
+        }
+
+        public int OffPolicyEveryVisitMCControl(Policy behaviour, int limit = 1000)
+        {
+            // Initialize for every state action pair
+            var saps = from s in P.Values
+                    from sap in s.Actions.Values
+                    select sap;
+            foreach (StateActionPolicy sap in saps)
+            {
+                sap.C = 0;
+            }
+
+            for (int i = 0; i < limit; i++)
+            {
+                // Generate an episode using behavior policy
+                var episode = Walker.GenerateEpisode(env, behaviour, exploringStart: false);
+                // initiate new return G
+                double g = 0;
+                // initiate importance sampling ratio
+                double w = 1;
+                foreach (var sar in episode.Reverse<Tuple<State, Action, double>>())
+                {
+                    State s = sar.Item1;
+                    Action a = sar.Item2;
+                    double r = sar.Item3;
+
+                    // prediction
+                    // calculate return for current state action pair
+                    // discounted by gamma
+                    g = r + gamma * g;
+                    // we are running in reverse order so
+                    // return will be properly propagated
+                    // to state action pair that has been visited first
+                    StateActionPolicy sap = P[s].Actions[a];
+                    // update cumulative sum of ratios
+                    sap.C += w;
+                    // update value of state action pair
+                    if (sap.Value.HasValue)
+                    {
+                        sap.Value += w / sap.C * (g - sap.Value);
+                    }
+                    else
+                    {
+                        sap.Value = w / sap.C * g;
+                    }
+                    // just for tracking
+                    sap.N++;
+
+                    // control
+                    // greedily mark only max yielding actions
+                    double? max = P[s].Actions.Max(kvp => kvp.Value.Value);
+                    double size = P[s].Actions.Where(kvp => kvp.Value.Value == max).Count();
+                    foreach (var item in P[s].Actions)
+                    {
+                        item.Value.P = item.Value.Value == max ? 1 / size : 0;
+                    }
+
+                    // termination condition
+                    // if taget policy already knows best s-a pair for that step
+                    // in episode after update, there is no reason
+                    // to follow behavior generated episode farther
+                    var bestActions = from kvp in P[s].Actions
+                                      where kvp.Value.InPolicy
+                                      select kvp.Key;
+                    if (!bestActions.Contains(a))
+                    {
+                        break;
+                    }
+                    // update ratio
+                    // as the policy is soft we have to use probability of target policy
+                    // w will be >= 1
+                    w = w * P[s].Actions[a].P / behaviour.P[s].Actions[a].P;
                 }
             }
             return limit;
@@ -604,11 +686,33 @@ namespace GridworldWithDP
             env.PrintsSAV(p);
         }
 
+        static void EvaluateOffPolicy()
+        {
+            Environment env = new Environment();
+            //Console.WriteLine("Initial gridworld");
+            //env.Print();
+            //Console.WriteLine();
+
+            // target policy
+            Policy p = new Policy(env, gamma: 0.5);
+            // behaviour policy
+            Policy mu = new Policy(env);
+            Console.WriteLine("Starting policies");
+            env.PrintPolicy(p);
+            //env.PrintPolicy(mu);
+            Console.WriteLine();
+
+            p.OffPolicyEveryVisitMCControl(mu, limit: 10000);
+            env.PrintPolicy(p);
+            env.PrintsSAV(p);
+        }
+
         static void Main(string[] args)
         {
             Console.WriteLine("1 - Evaluate policy.");
             Console.WriteLine("2 - Iterate State-Action pair values with exploring starts.");
             Console.WriteLine("3 - Iterate on-policy first visit MC w/soft-policy");
+            Console.WriteLine("4 - Iterate off-policy every visit MC");
             string decision = Console.ReadLine();
             switch (decision)
             {
@@ -620,6 +724,9 @@ namespace GridworldWithDP
                     break;
                 case "3":
                     EvaluateOnPolicy();
+                    break;
+                case "4":
+                    EvaluateOffPolicy();
                     break;
                 default:
                     break;

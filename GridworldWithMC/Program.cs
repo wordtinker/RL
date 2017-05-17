@@ -163,9 +163,9 @@ namespace GridworldWithDP
         {
             foreach (var s in States)
             {
-                foreach (Action a in Enum.GetValues(typeof(Action)).Cast<Action>())
+                foreach (var kvp in policy.A(s))
                 {
-                    Console.WriteLine($"{s.i} {s.j} {a.ToString()} {policy.V(s, a)}");
+                    Console.WriteLine($"{s.i} {s.j} {kvp.Key} {kvp.Value.Value:N2} {kvp.Value.N}");
                 }
                 Console.WriteLine();
             }
@@ -178,26 +178,36 @@ namespace GridworldWithDP
                 string line1 = "";
                 string line2 = "";
                 string line3 = "";
+                string line4 = "";
+                string line5 = "";
                 foreach (State s in item)
                 {
                     if (s.Type == StateType.Terminal)
                     {
-                        line1 += "xxx ";
-                        line2 += "xxx ";
-                        line3 += "xxx ";
+                        line1 += "xxxxxxxxxxx ";
+                        line2 += "xxxxxxxxxxx ";
+                        line3 += "xxxxxxxxxxx ";
+                        line4 += "xxxxxxxxxxx ";
+                        line5 += "xxxxxxxxxxx ";
                     }
                     else
                     {
-                        Action[] actions = policy.A(s).ToArray();
-                        line1 += actions.Contains(Action.Up) ? " ^  " : "    ";
-                        line2 += actions.Contains(Action.Left) ? "< " : "  ";
-                        line2 += actions.Contains(Action.Right) ? "> " : "  ";
-                        line3 += actions.Contains(Action.Down) ? " v  " : "    ";
+                        string empty = "            ";
+                        var actions = policy.A(s);
+                        var partial = actions.Where(kvp => kvp.Value.InPolicy).Select(kvp => kvp.Key);
+                        line1 += partial.Contains(Action.Up) ? "     ^      " : empty;
+                        line2 += partial.Contains(Action.Up) ? $"    {actions[Action.Up].P:N2}    " : empty;
+                        line3 += partial.Contains(Action.Left) ? $"<{actions[Action.Left].P:N2} " : "      ";
+                        line3 += partial.Contains(Action.Right) ? $" {actions[Action.Right].P:N2}>" : "      ";
+                        line4 += partial.Contains(Action.Down) ? $"    {actions[Action.Down].P:N2}    " : empty;
+                        line5 += partial.Contains(Action.Down) ? "     v      " : empty;
                     }
                 }
                 Console.WriteLine(line1);
                 Console.WriteLine(line2);
                 Console.WriteLine(line3);
+                Console.WriteLine(line4);
+                Console.WriteLine(line5);
                 Console.WriteLine();
             }
         }
@@ -220,20 +230,47 @@ namespace GridworldWithDP
 
     class PolicyState
     {
+        private Random rnd;
         // state value
         public double? Value { get; set; }
         // state return
         public double? G { get; set; }
         // number of times state has been visited(first time)
         public int N { get; set; }
-        // list of equiprobable actions
-        public Dictionary<Action, StateActionPolicy> Actions { get; set; }
+        // list of actions
+        public Dictionary<Action, StateActionPolicy> Actions { get; }
+        public Action NextAction
+        {
+            get
+            {
+                // choose action randomly
+                // any policy is supported(greedy, soft-epsilon)
+                double ra = rnd.NextDouble();
+                double accumulator = 0;
+                foreach (var kvp in Actions.Where(sap => sap.Value.InPolicy))
+                {
+                    accumulator += kvp.Value.P;
+                    if (ra < accumulator)
+                    {
+                        return kvp.Key;
+                    }
+                }
+                // normally it would have returned already, but if
+                // due to uneven division of probabilities
+                // ra was ever less than accumulated probability
+                // return last key
+                return Actions.Keys.Last();
+            }
+        }
         public PolicyState(State s)
         {
+            rnd = new Random();
             Actions = new Dictionary<Action, StateActionPolicy>();
+            double size = s.Actions.Count();
             foreach (Action a in s.Actions)
             {
                 Actions[a] = new StateActionPolicy();
+                Actions[a].P = 1 / size;
             }
         }
     }
@@ -247,10 +284,12 @@ namespace GridworldWithDP
         // number of times state action has been visited(first time)
         public int N { get; set; }
         // marks action as used by Policy
-        public bool InPolicy { get; set; }
+        public bool InPolicy { get { return P > 0; } }
+        // probability of activation in policy
+        public double P { get; set; }
+
         public StateActionPolicy()
         {
-            InPolicy = true;
             Value = null;
         }
     }
@@ -272,43 +311,61 @@ namespace GridworldWithDP
             return P[s].Actions[a].Value.GetValueOrDefault(double.MinValue);
         }
 
-        public IEnumerable<Action> A(State s)
+        public Dictionary<Action, StateActionPolicy> A(State s)
         {
-            return P[s].Actions
-                .Where(kvp => kvp.Value.InPolicy == true)
-                .Select(kvp => kvp.Key);
+            return P[s].Actions;
         }
 
-        /// <summary>
-        /// Generates an episode starting from S0, A0, following π
-        /// </summary>
-        /// <returns></returns>
-        private List<Tuple<State, Action, double>> GenerateEpisode()
+        private IEnumerable<Tuple<State, Action, double>> GenerateWalk(State s, Action a)
         {
-            // Exploring start
-            // any s,a pair is viable as starting pair
-            // regardless of policy
-            List<Tuple<State, Action, double>> episode = new List<Tuple<State, Action, double>>();
-            int startingState = rnd.Next(env.States.Count());
-            State s = env.States.ElementAt(startingState);
-            int startingAction = rnd.Next(s.Actions.Count());
-            Action a = s.Actions.ElementAt(startingAction);
+            // Reward
             double r;
             while (true)
             {
                 // ask for new state and reward
                 var nsr = env.GetReward(s, a);
                 r = nsr.Item2;
-                episode.Add(Tuple.Create(s, a, r));
+
+                yield return Tuple.Create(s, a, r);
+
                 s = nsr.Item1;
                 if (s.Type == StateType.Terminal)
                 {
                     break;
                 }
-                // choose action randomly
-                var availableActions = A(s).ToList();
-                a = availableActions[rnd.Next(availableActions.Count)];
+                // choose action by the policy
+                a = P[s].NextAction;
             }
+        }
+
+        /// <summary>
+        /// Generates an episode starting from S0, A0, following π
+        /// </summary>
+        /// <returns></returns>
+        private List<Tuple<State, Action, double>> GenerateEpisode(bool exploringStart = true)
+        {
+            List<Tuple<State, Action, double>> episode = new List<Tuple<State, Action, double>>();
+            int startingState = rnd.Next(env.States.Count());
+            State s = env.States.ElementAt(startingState);
+            Action a;
+            if (exploringStart)
+            {
+                // Exploring start
+                // any s,a pair is viable as starting pair
+                // regardless of policy
+                int startingAction = rnd.Next(s.Actions.Count());
+                a = s.Actions.ElementAt(startingAction);
+            }
+            else
+            {
+                // choose action by the policy
+                a = P[s].NextAction;
+            }
+            // Generate a walk from that position
+            foreach (var item in GenerateWalk(s, a))
+            {
+                episode.Add(item);
+            } 
             return episode;
         }
 
@@ -415,9 +472,63 @@ namespace GridworldWithDP
                 // control
                 // greedily mark only max yielding actions
                 double? max = P[s].Actions.Max(kvp => kvp.Value.Value);
+                double size = P[s].Actions.Where(kvp => kvp.Value.Value == max).Count();
                 foreach (var item in P[s].Actions)
                 {
-                    item.Value.InPolicy = item.Value.Value == max;
+                    item.Value.P = item.Value.Value == max ? 1 / size : 0;
+                }
+            }
+            return limit;
+        }
+
+        public int OnPolicyFirstVisitMCControl(int limit = 1000, double epsilon = 0.1)
+        {
+            for (int i = 0; i < limit; i++)
+            {
+                // Generate an episode
+                var episode = GenerateEpisode(exploringStart:false);
+
+                // prediction
+                // initiate new return G
+                double g = 0;
+                foreach (var sar in episode.Reverse<Tuple<State, Action, double>>())
+                {
+                    // calculate return for current state action pair
+                    // discounted by gamma
+                    g = sar.Item3 + gamma * g;
+                    // we are running in reverse order so
+                    // return will be properly propagated
+                    // to state action pair that has been visited first
+                    P[sar.Item1].Actions[sar.Item2].G = g;
+                }
+                foreach (var sar in episode)
+                {
+                    State s = sar.Item1;
+                    // update value function
+                    StateActionPolicy sap = P[s].Actions[sar.Item2];
+                    if (sap.G.HasValue)
+                    {
+                        if (sap.Value.HasValue)
+                        {
+                            sap.Value += (sap.G.Value - sap.Value) / (double)++sap.N;
+                        }
+                        else
+                        {
+                            sap.Value = sap.G.Value;
+                            sap.N = 1;
+                        }
+                        sap.G = null;
+                    }
+
+                    // control
+                    // softly mark only max yielding actions
+                    double? max = P[s].Actions.Max(kvp => kvp.Value.Value);
+                    double size = P[s].Actions.Where(kvp => kvp.Value.Value == max).Count();
+                    double x = (1 - epsilon) / size + epsilon / (double)P[s].Actions.Count;
+                    foreach (var item in P[s].Actions)
+                    {
+                        item.Value.P = item.Value.Value == max ? x : epsilon / (double)P[s].Actions.Count;
+                    }
                 }
             }
             return limit;
@@ -446,7 +557,7 @@ namespace GridworldWithDP
             env.Print();
             Console.WriteLine();
 
-            Policy policy = new Policy(env, gamma: 1);
+            Policy policy = new Policy(env, gamma: 0.5);
             Console.WriteLine("Starting policy");
             env.PrintPolicy(policy);
             Console.WriteLine();
@@ -464,7 +575,6 @@ namespace GridworldWithDP
 
             // Monte carlo method with exploring stars
             Policy sap = new Policy(env, gamma: 0.5);
-
             Console.WriteLine("Starting SA policy");
             env.PrintPolicy(sap);
             Console.WriteLine();
@@ -477,10 +587,28 @@ namespace GridworldWithDP
             env.PrintsSAV(sap);
         }
 
+        static void EvaluateOnPolicy()
+        {
+            Environment env = new Environment();
+            Console.WriteLine("Initial gridworld");
+            env.Print();
+            Console.WriteLine();
+
+            Policy p = new Policy(env, gamma: 0.5);
+            Console.WriteLine("Starting policy");
+            env.PrintPolicy(p);
+            Console.WriteLine();
+
+            p.OnPolicyFirstVisitMCControl(limit: 10000, epsilon: 0.2);
+            env.PrintPolicy(p);
+            env.PrintsSAV(p);
+        }
+
         static void Main(string[] args)
         {
             Console.WriteLine("1 - Evaluate policy.");
-            Console.WriteLine("2 - Evaluate State-Action pair values with exploring starts.");
+            Console.WriteLine("2 - Iterate State-Action pair values with exploring starts.");
+            Console.WriteLine("3 - Iterate on-policy first visit MC w/soft-policy");
             string decision = Console.ReadLine();
             switch (decision)
             {
@@ -489,6 +617,9 @@ namespace GridworldWithDP
                     break;
                 case "2":
                     EvaluateStateActionValuesWithMC();
+                    break;
+                case "3":
+                    EvaluateOnPolicy();
                     break;
                 default:
                     break;

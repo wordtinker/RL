@@ -8,16 +8,16 @@ namespace GridWorldWithTD
     {
         private Random rnd;
         // state value
-        public double? Value { get; set; }
+        public double Value { get; set; }
         // state return
-        public double? G { get; set; }
+        public double G { get; set; }
         // number of times state has been visited(first time)
         public int N { get; set; }
         // list of actions
         public Dictionary<Action, StateActionPolicy> Actions { get; }
         public void Rebalance(double epsilon = 0.2)
         {
-            double? max = Actions.Max(kvp => kvp.Value.Value);
+            double max = Actions.Values.Max(p => p.Value);
             double size = Actions.Where(kvp => kvp.Value.Value == max).Count();
             if (epsilon == 0)
             {
@@ -76,11 +76,11 @@ namespace GridWorldWithTD
     class StateActionPolicy
     {
         // state action value
-        public double? Value { get; set; }
+        public double Value { get; set; }
         // cumulative sum Cn of the weights given to the first n returns for off policy learning
         public double C { get; set; }
         // state action return
-        public double? G { get; set; }
+        public double G { get; set; }
         // number of times state action has been visited(first time or every time)
         public int N { get; set; }
         // marks action as used by Policy
@@ -90,7 +90,7 @@ namespace GridWorldWithTD
 
         public StateActionPolicy()
         {
-            Value = null;
+            Value = 0;
         }
     }
 
@@ -165,12 +165,12 @@ namespace GridWorldWithTD
 
         public double V(State s)
         {
-            return P[s].Value.GetValueOrDefault(double.MinValue);
+            return P[s].Value;
         }
 
         public double V(State s, Action a)
         {
-            return P[s].Actions[a].Value.GetValueOrDefault(double.MinValue);
+            return P[s].Actions[a].Value;
         }
 
         public Dictionary<Action, StateActionPolicy> A(State s)
@@ -201,22 +201,22 @@ namespace GridWorldWithTD
                     Action nextAction = sar.Item2;
                     // Update Q for s-a
                     StateActionPolicy sap = P[s].Actions[a];
-                    double currentValue = sap.Value.GetValueOrDefault(0);
+                    double currentValue = sap.Value;
                     // chose method of learning
                     double nextSAValue;
                     switch (method)
                     {
                         case PolicyMethod.SARSA:
                             // get the value on next action
-                            nextSAValue = P[nextState].Actions[nextAction].Value.GetValueOrDefault(0);
+                            nextSAValue = P[nextState].Actions[nextAction].Value;
                             break;
                         case PolicyMethod.QLearning:
                             // get the maximum value of next actions 
-                            nextSAValue = P[nextState].Actions.Values.Max(p => p.Value).GetValueOrDefault(0);
+                            nextSAValue = P[nextState].Actions.Values.Max(p => p.Value);
                             break;
                         case PolicyMethod.ExpectedSARSA:
                             // get the expected value of the next state
-                            nextSAValue = P[nextState].Actions.Values.Select(p => p.P * p.Value.GetValueOrDefault(0)).Sum();
+                            nextSAValue = P[nextState].Actions.Values.Select(p => p.P * p.Value).Sum();
                             break;
                         default:
                             throw new NotImplementedException();
@@ -293,9 +293,12 @@ namespace GridWorldWithTD
             env.PrintPolicy(p);
             env.PrintsSAV(p);
             // show as greedy policy
-            foreach (var item in p.P.Values)
+            foreach (var item in p.P)
             {
-                item.Rebalance(0);
+                if (item.Key.Type != StateType.Terminal)
+                {
+                    item.Value.Rebalance(0);
+                }
             }
             env.PrintPolicy(p);
         }

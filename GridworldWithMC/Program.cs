@@ -119,7 +119,7 @@ namespace GridworldWithDP
             State newState = NextState(state, action);
             if (newState.Type == StateType.Terminal)
             {
-                return Tuple.Create(newState, 1.00);
+                return Tuple.Create(newState, 10.00);
             }
             else if (state == newState)
             {
@@ -232,13 +232,35 @@ namespace GridworldWithDP
     {
         private Random rnd;
         // state value
-        public double? Value { get; set; }
+        public double Value { get; set; }
         // state return
-        public double? G { get; set; }
+        public double G { get; set; }
         // number of times state has been visited(first time)
         public int N { get; set; }
         // list of actions
         public Dictionary<Action, StateActionPolicy> Actions { get; }
+        public void Rebalance(double epsilon = 0.2)
+        {
+            double max = Actions.Values.Max(p => p.Value);
+            double size = Actions.Where(kvp => kvp.Value.Value == max).Count();
+            if (epsilon == 0)
+            {
+                // policy is greedy
+                foreach (var item in Actions)
+                {
+                    item.Value.P = item.Value.Value == max ? 1 / size : 0;
+                }
+            }
+            else
+            {
+                // soft policy
+                double x = (1 - epsilon) / size + epsilon / (double)Actions.Count;
+                foreach (var item in Actions)
+                {
+                    item.Value.P = item.Value.Value == max ? x : epsilon / (double)Actions.Count;
+                }
+            }
+        }
         public Action NextAction
         {
             get
@@ -278,11 +300,11 @@ namespace GridworldWithDP
     class StateActionPolicy
     {
         // state action value
-        public double? Value { get; set; }
+        public double Value { get; set; }
         // cumulative sum Cn of the weights given to the first n returns for off policy learning
         public double C { get; set; }
         // state action return
-        public double? G { get; set; }
+        public double G { get; set; }
         // number of times state action has been visited(first time or every time)
         public int N { get; set; }
         // marks action as used by Policy
@@ -292,7 +314,7 @@ namespace GridworldWithDP
 
         public StateActionPolicy()
         {
-            Value = null;
+            Value = 0;
         }
     }
 
@@ -362,12 +384,12 @@ namespace GridworldWithDP
 
         public double V(State s)
         {
-            return P[s].Value.GetValueOrDefault(double.MinValue);
+            return P[s].Value;
         }
 
         public double V(State s, Action a)
         {
-            return P[s].Actions[a].Value.GetValueOrDefault(double.MinValue);
+            return P[s].Actions[a].Value;
         }
 
         public Dictionary<Action, StateActionPolicy> A(State s)
@@ -409,19 +431,8 @@ namespace GridworldWithDP
                 {
                     // update value function
                     PolicyState p = P[sr.Item1];
-                    if (p.G.HasValue)
-                    {
-                        if (p.Value.HasValue)
-                        {
-                            p.Value += (p.G.Value - p.Value) / (double)++p.N;
-                        }
-                        else
-                        {
-                            p.Value = p.G.Value;
-                            p.N = 1;
-                        }
-                        p.G = null;
-                    }
+                    p.Value += (p.G - p.Value) / (double)++p.N;
+                    p.G = 0;
                 }
             }
             return limit;
@@ -458,30 +469,16 @@ namespace GridworldWithDP
                 {
                     // update value function
                     StateActionPolicy sap = P[sar.Item1].Actions[sar.Item2];
-                    if (sap.G.HasValue)
-                    {
-                        if (sap.Value.HasValue)
-                        {
-                            sap.Value += (sap.G.Value - sap.Value) / (double)++sap.N;
-                        }
-                        else
-                        {
-                            sap.Value = sap.G.Value;
-                            sap.N = 1;
-                        }
-                        sap.G = null;
-                    }
+                    sap.Value += (sap.G - sap.Value) / (double)++sap.N;
                 }
             }
-            foreach (var s in env.States)
+            // control
+            foreach (var item in P)
             {
-                // control
-                // greedily mark only max yielding actions
-                double? max = P[s].Actions.Max(kvp => kvp.Value.Value);
-                double size = P[s].Actions.Where(kvp => kvp.Value.Value == max).Count();
-                foreach (var item in P[s].Actions)
+                if (item.Key.Type != StateType.Terminal)
                 {
-                    item.Value.P = item.Value.Value == max ? 1 / size : 0;
+                    // greedily mark only max yielding actions
+                    item.Value.Rebalance(0);
                 }
             }
             return limit;
@@ -512,29 +509,10 @@ namespace GridworldWithDP
                     State s = sar.Item1;
                     // update value function
                     StateActionPolicy sap = P[s].Actions[sar.Item2];
-                    if (sap.G.HasValue)
-                    {
-                        if (sap.Value.HasValue)
-                        {
-                            sap.Value += (sap.G.Value - sap.Value) / (double)++sap.N;
-                        }
-                        else
-                        {
-                            sap.Value = sap.G.Value;
-                            sap.N = 1;
-                        }
-                        sap.G = null;
-                    }
-
+                    sap.Value += (sap.G - sap.Value) / (double)++sap.N;
                     // control
                     // softly mark only max yielding actions
-                    double? max = P[s].Actions.Max(kvp => kvp.Value.Value);
-                    double size = P[s].Actions.Where(kvp => kvp.Value.Value == max).Count();
-                    double x = (1 - epsilon) / size + epsilon / (double)P[s].Actions.Count;
-                    foreach (var item in P[s].Actions)
-                    {
-                        item.Value.P = item.Value.Value == max ? x : epsilon / (double)P[s].Actions.Count;
-                    }
+                    P[s].Rebalance(epsilon);
                 }
             }
             return limit;
@@ -576,25 +554,13 @@ namespace GridworldWithDP
                     // update cumulative sum of ratios
                     sap.C += w;
                     // update value of state action pair
-                    if (sap.Value.HasValue)
-                    {
-                        sap.Value += w / sap.C * (g - sap.Value);
-                    }
-                    else
-                    {
-                        sap.Value = w / sap.C * g;
-                    }
+                    sap.Value += w / sap.C * (g - sap.Value);
                     // just for tracking
                     sap.N++;
 
                     // control
                     // greedily mark only max yielding actions
-                    double? max = P[s].Actions.Max(kvp => kvp.Value.Value);
-                    double size = P[s].Actions.Where(kvp => kvp.Value.Value == max).Count();
-                    foreach (var item in P[s].Actions)
-                    {
-                        item.Value.P = item.Value.Value == max ? 1 / size : 0;
-                    }
+                    P[s].Rebalance(0);
 
                     // termination condition
                     // if taget policy already knows best s-a pair for that step

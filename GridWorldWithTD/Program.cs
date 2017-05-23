@@ -149,6 +149,13 @@ namespace GridWorldWithTD
         }
     }
 
+    enum PolicyMethod
+    {
+        SARSA,
+        QLearning,
+        ExpectedSARSA
+    }
+
     class Policy
     {
         public Dictionary<State, PolicyState> P { get; }
@@ -171,7 +178,7 @@ namespace GridWorldWithTD
             return P[s].Actions;
         }
 
-        public int SARSA(int limit = 1000, double alpha = 0.5)
+        public int Learn(PolicyMethod method, int limit = 1000, double alpha = 0.5)
         {
             for (int i = 0; i < limit; i++)
             {
@@ -195,14 +202,32 @@ namespace GridWorldWithTD
                     // Update Q for s-a
                     StateActionPolicy sap = P[s].Actions[a];
                     double currentValue = sap.Value.GetValueOrDefault(0);
-                    double nextSAValue = P[nextState].Actions[nextAction].Value.GetValueOrDefault(0);
+                    // chose method of learning
+                    double nextSAValue;
+                    switch (method)
+                    {
+                        case PolicyMethod.SARSA:
+                            // get the value on next action
+                            nextSAValue = P[nextState].Actions[nextAction].Value.GetValueOrDefault(0);
+                            break;
+                        case PolicyMethod.QLearning:
+                            // get the maximum value of next actions 
+                            nextSAValue = P[nextState].Actions.Values.Max(p => p.Value).GetValueOrDefault(0);
+                            break;
+                        case PolicyMethod.ExpectedSARSA:
+                            // get the expected value of the next state
+                            nextSAValue = P[nextState].Actions.Values.Select(p => p.P * p.Value.GetValueOrDefault(0)).Sum();
+                            break;
+                        default:
+                            throw new NotImplementedException();
+                    }
                     sap.Value = currentValue + alpha * (r + gamma * nextSAValue - currentValue);
                     sap.N++;
                     // rebalance probabilities of current policy
                     P[s].Rebalance(epsilon: 0.2);
-                    r = sar.Item3;
                     s = nextState;
                     a = nextAction;
+                    r = sar.Item3;
                 }
             }
             return limit;
@@ -224,8 +249,37 @@ namespace GridWorldWithTD
 
     class Program
     {
-        static void UseSARSA(AEnvironment env)
+        static void Main(string[] args)
         {
+            Console.WriteLine("1 - SARSA(On-policy) on Grid World");
+            Console.WriteLine("2 - SARSA(On-policy) on Windy World");
+            Console.WriteLine("3 - Q-Learning(Off-policy) on Grid World");
+            Console.WriteLine("4 - Expected SARSA(Off-policy) on Grid World");
+            string decision = Console.ReadLine();
+            AEnvironment env;
+            PolicyMethod method;
+            switch (decision)
+            {
+                case "1":
+                    env = new GridWorld();
+                    method = PolicyMethod.SARSA;
+                    break;
+                case "2":
+                    env = new WindyGrid();
+                    method = PolicyMethod.SARSA;
+                    break;
+                case "3":
+                    env = new GridWorld();
+                    method = PolicyMethod.QLearning;
+                    break;
+                case "4":
+                    env = new GridWorld();
+                    method = PolicyMethod.ExpectedSARSA;
+                    break;
+                default:
+                    throw new NotImplementedException();
+            }
+
             Console.WriteLine("Initial gridworld");
             env.Print();
             Console.WriteLine();
@@ -235,7 +289,7 @@ namespace GridWorldWithTD
             env.PrintPolicy(p);
             Console.WriteLine();
 
-            p.SARSA(limit: 100000, alpha: 0.5);
+            p.Learn(method, limit: 100000, alpha: 0.5);
             env.PrintPolicy(p);
             env.PrintsSAV(p);
             // show as greedy policy
@@ -244,27 +298,6 @@ namespace GridWorldWithTD
                 item.Rebalance(0);
             }
             env.PrintPolicy(p);
-        }
-
-        static void Main(string[] args)
-        {
-            Console.WriteLine("1 - SARSA(On-policy) on Grid World");
-            Console.WriteLine("2 - SARSA(On-policy) on Windy World");
-            string decision = Console.ReadLine();
-            AEnvironment env;
-            switch (decision)
-            {
-                case "1":
-                    env = new GridWorld();
-                    UseSARSA(env);
-                    break;
-                case "2":
-                    env = new WindyGrid();
-                    UseSARSA(env);
-                    break;
-                default:
-                    break;
-            }
         }
     }
 }

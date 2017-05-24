@@ -305,7 +305,7 @@ namespace GridWorldWithTD
             State newState = NextState(state, action);
             if (newState.Type == StateType.Terminal)
             {
-                return Tuple.Create(newState, 1.00);
+                return Tuple.Create(newState, 10.00);
             }
             else if (state == newState)
             {

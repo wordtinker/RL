@@ -149,6 +149,30 @@ namespace GridWorldWithTD
         }
     }
 
+    class Bank
+    {
+        private int limit;
+        private Queue<Tuple<State, Action, double>> queue;
+
+        public void Enqueue(Tuple<State, Action, double> sar)
+        {
+            if (queue.Count >= limit) throw new Exception();
+            queue.Enqueue(sar);
+        }
+        public Tuple<State, Action, double> CalculateG(double gamma)
+        {
+            double g = queue.Select((n, i) => Math.Pow(gamma, i) * n.Item3).Sum();
+            var sar = queue.Dequeue();
+            return Tuple.Create(sar.Item1, sar.Item2, g);
+        }
+
+        public Bank(int limit)
+        {
+            this.limit = limit;
+            this.queue = new Queue<Tuple<State, Action, double>>();
+        }
+    }
+
     enum PolicyMethod
     {
         SARSA,
@@ -233,6 +257,64 @@ namespace GridWorldWithTD
             return limit;
         }
 
+        public int NStepSARSA(int limit = 1000, double alpha = 0.5, int N = 5)
+        {
+            int T;
+            for (int j = 0; j < limit; j++)
+            {
+                // Generate an episode
+                // episode MUST be IEnumerable so policy can be evaluated
+                // at runtime
+                var episode = Walker.GenerateEpisode(env, this, exploringStart: false);
+                var enumer = episode.GetEnumerator();
+                int tau;
+                Bank bank = new Bank(N);
+                // move to first element
+                enumer.MoveNext();
+                // chose A from S using policy
+                State s = enumer.Current.Item1;
+                Action a = enumer.Current.Item2;
+                T = int.MaxValue;
+                // for each next state
+                for (int t = 0;; t++)
+                {
+                    if (t < T)
+                    {
+                        // Store Ai and Ri+1
+                        bank.Enqueue(enumer.Current);
+                        // check if we reached the end of episode
+                        if (!enumer.MoveNext())
+                        {
+                            T = t + 1;
+                        }
+                        else
+                        {
+                            // chose A from S using policy
+                            s = enumer.Current.Item1;
+                            a = enumer.Current.Item2;
+                        }
+                    }
+                    // the time whose estimate is being updated
+                    tau = t - N + 1;
+                    if (tau >= 0)
+                    {
+                        // calculate return
+                        Tuple<State, Action, double> sag =  bank.CalculateG(gamma);
+                        StateActionPolicy sap = P[sag.Item1].Actions[sag.Item2];
+                        double G = sag.Item3;
+                        // calculate estimate of future value tail
+                        if (tau + N < T) G += Math.Pow(gamma, N) * P[s].Actions[a].Value;
+                        sap.Value += alpha * (G - sap.Value);
+                        // update policy
+                        P[sag.Item1].Rebalance(epsilon: 0.2);
+                    }
+                    // end loop condition
+                    if (tau == T - 1) break;
+                }
+            }
+            return limit;
+        }
+
         public Policy(AEnvironment env, double gamma = 1)
         {
             this.rnd = new Random();
@@ -249,37 +331,32 @@ namespace GridWorldWithTD
 
     class Program
     {
-        static void Main(string[] args)
+        static void NStep(AEnvironment env)
         {
-            Console.WriteLine("1 - SARSA(On-policy) on Grid World");
-            Console.WriteLine("2 - SARSA(On-policy) on Windy World");
-            Console.WriteLine("3 - Q-Learning(Off-policy) on Grid World");
-            Console.WriteLine("4 - Expected SARSA(Off-policy) on Grid World");
-            string decision = Console.ReadLine();
-            AEnvironment env;
-            PolicyMethod method;
-            switch (decision)
-            {
-                case "1":
-                    env = new GridWorld();
-                    method = PolicyMethod.SARSA;
-                    break;
-                case "2":
-                    env = new WindyGrid();
-                    method = PolicyMethod.SARSA;
-                    break;
-                case "3":
-                    env = new GridWorld();
-                    method = PolicyMethod.QLearning;
-                    break;
-                case "4":
-                    env = new GridWorld();
-                    method = PolicyMethod.ExpectedSARSA;
-                    break;
-                default:
-                    throw new NotImplementedException();
-            }
+            Console.WriteLine("Initial gridworld");
+            env.Print();
+            Console.WriteLine();
 
+            Policy p = new Policy(env, gamma: 0.5);
+            Console.WriteLine("Starting policy");
+            env.PrintPolicy(p);
+            Console.WriteLine();
+
+            p.NStepSARSA(limit: 50000, alpha: 0.5, N: 5);
+            env.PrintPolicy(p);
+            env.PrintsSAV(p);
+            // show as greedy policy
+            foreach (var item in p.P)
+            {
+                if (item.Key.Type != StateType.Terminal)
+                {
+                    item.Value.Rebalance(0);
+                }
+            }
+            env.PrintPolicy(p);
+        }
+        static void OneStep(AEnvironment env, PolicyMethod method)
+        {
             Console.WriteLine("Initial gridworld");
             env.Print();
             Console.WriteLine();
@@ -301,6 +378,46 @@ namespace GridWorldWithTD
                 }
             }
             env.PrintPolicy(p);
+        }
+        static void Main(string[] args)
+        {
+            Console.WriteLine("1 - SARSA(On-policy) on Grid World");
+            Console.WriteLine("2 - SARSA(On-policy) on Windy World");
+            Console.WriteLine("3 - Q-Learning(Off-policy) on Grid World");
+            Console.WriteLine("4 - Expected SARSA(Off-policy) on Grid World");
+            Console.WriteLine("5 - n-SARSA on Windy World");
+            string decision = Console.ReadLine();
+            AEnvironment env;
+            PolicyMethod method;
+            switch (decision)
+            {
+                case "1":
+                    env = new GridWorld();
+                    method = PolicyMethod.SARSA;
+                    OneStep(env, method);
+                    break;
+                case "2":
+                    env = new WindyGrid();
+                    method = PolicyMethod.SARSA;
+                    OneStep(env, method);
+                    break;
+                case "3":
+                    env = new GridWorld();
+                    method = PolicyMethod.QLearning;
+                    OneStep(env, method);
+                    break;
+                case "4":
+                    env = new GridWorld();
+                    method = PolicyMethod.ExpectedSARSA;
+                    OneStep(env, method);
+                    break;
+                case "5":
+                    env = new WindyGrid();
+                    NStep(env);
+                    break;
+                default:
+                    throw new NotImplementedException();
+            }
         }
     }
 }

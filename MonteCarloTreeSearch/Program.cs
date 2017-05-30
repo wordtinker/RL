@@ -24,7 +24,7 @@ namespace MonteCarloTreeSearch
                 }
                 else
                 {
-                    p.Value = p.W / p.N + c * Math.Sqrt(Math.Log(N) / p.N);
+                    p.Value = p.W / (double)p.N + c * Math.Sqrt(Math.Log(N) / p.N);
                 }
             }
 
@@ -266,10 +266,9 @@ namespace MonteCarloTreeSearch
                 // Create a policy for simulation phase
                 IPolicy randomMove = new RandomPolicy();
                 MCTS search = new MCTS(new ProxyWind(env), s, policy, randomMove);
-                search.UpdatePolicy(1000);
+                search.UpdatePolicy(10000);
 
-                env.PrintPolicy(policy);
-                break;
+                //env.PrintPolicy(policy);
                 // choose action
                 Action a = policy.GetAction(s);
                 Console.WriteLine(a);

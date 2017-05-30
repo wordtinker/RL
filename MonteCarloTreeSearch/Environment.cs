@@ -283,8 +283,8 @@ namespace MonteCarloTreeSearch
             }
 
             // apply wind
-            //if (nextj > 4 && nextj < 9) nexti--;
-            //if (nextj > 5 && nextj < 8) nexti--;
+            if (nextj > 4 && nextj < 9) nexti--;
+            if (nextj > 5 && nextj < 8) nexti--;
 
             // fix out of bounds error
             if (nexti < 0) nexti = 0;
